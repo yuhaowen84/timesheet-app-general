@@ -27,7 +27,8 @@ for r in entries:
     date_str  = r["date_str"]
     date      = datetime.strptime(date_str, "%Y-%m-%d").date()
 
-    values = [r["rs_on"], r["as_on"], r["rs_off"], r["as_off"], r["worked"], r["extra"]]
+    values = [r["rs_on"], r["as_on"], r["rs_off"], r["as_off"], r["worked"], r["extra"], r["date_str"]]
+
     sick = bool(r["sick"])
     off  = bool(r["off"])
     ado  = bool(r["ado"])
@@ -162,3 +163,4 @@ def highlight_total(row):
     return ['background-color: #d0ffd0' if row.name == len(df)-1 else '' for _ in row]
 
 st.dataframe(df.style.apply(highlight_total, axis=1), use_container_width=True)
+
