@@ -108,8 +108,10 @@ for r in entries:
 
     # -------- Rates (pass effective rates) --------
     ot, prate, sload, srate, drate, lrate, dcount = calculate_row(
-        weekday, effective_values, sick, penalty, special, unit, rates=rates
+        weekday, effective_values, sick, penalty, special, unit,
+        rates={**rates, "OT": ot_enabled, "WOBOD": wobod_enabled}
     )
+
 
     if any(v.upper() == "ADO" for v in effective_values):
         any_ado = True
@@ -163,4 +165,5 @@ def highlight_total(row):
     return ['background-color: #d0ffd0' if row.name == len(df)-1 else '' for _ in row]
 
 st.dataframe(df.style.apply(highlight_total, axis=1), use_container_width=True)
+
 
