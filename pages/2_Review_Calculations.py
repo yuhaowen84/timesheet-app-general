@@ -32,6 +32,9 @@ for r in entries:
     sick = bool(r["sick"])
     off  = bool(r["off"])
     ado  = bool(r["ado"])
+    ot_enabled = bool(r.get("ot", False))
+    wobod_enabled = bool(r.get("wobod", False))
+
 
     # Precedence: ADO > Sick/Off > none
     effective_values = values.copy()
@@ -165,5 +168,6 @@ def highlight_total(row):
     return ['background-color: #d0ffd0' if row.name == len(df)-1 else '' for _ in row]
 
 st.dataframe(df.style.apply(highlight_total, axis=1), use_container_width=True)
+
 
 
