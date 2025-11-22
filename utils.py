@@ -111,17 +111,19 @@ def _ot_multiplier_for_day(day_index: int) -> float:
     return 1.5           # Weekdays
 
 # -------------------- main row calculation -------------------- #
-def calculate_row(day, values, sick, penalty_value, special_value, unit_val, rates=None):
+def calculate_row(day, date_obj, values, sick, penalty_value, special_value, unit_val, rates=None):
     """
-    values: [rs_on, as_on, rs_off, as_off, worked, extra, (date_str as values[6])]
-    unit_val: your existing 'Unit' value (already computed in Review_Calculations)
-    rates: dict of rate constants; if None, use module default
+    day:       "Monday"..."Sunday"
+    date_obj:  datetime.date for that row (from Review_Calculations)
+    values:    [rs_on, as_on, rs_off, as_off, worked, extra, ...]
+    unit_val:  your existing 'Unit' value (already computed in Review_Calculations)
+    rates:     dict of rate constants; if None, use module default
 
     OT logic has TWO layers:
 
     1) Daily OT (unit-based, original behaviour) – runs when OT checkbox is NOT ticked.
     2) OT shift (OT checkbox ticked) – whole worked hours that day at OT%,
-       split by actual day (Sat/Sun) if the shift crosses midnight.
+       split by actual day (Fri/Sat/Sun…) if the shift crosses midnight.
 
     WOBOD = extra 50% ordinary * worked_hours when OT shift + WOBOD checkbox.
 
@@ -207,28 +209,23 @@ def calculate_row(day, values, sick, penalty_value, special_value, unit_val, rat
                     ot_daily_pay = round(unit_val * ordinary, 2)
 
     # ============================================================
-    # 2) OT SHIFT PAY (tickbox: whole day at OT rate, split by date)
+    # 2) OT SHIFT PAY (tickbox: whole day at OT rate, split by date_obj)
     # ============================================================
     ot_shift_pay = 0.0
 
     if ot_shift_flag and rs_on not in ["OFF", "ADO"]:
-        date_str = values[6] if len(values) > 6 else None
         start_dt = end_dt = None
 
-        # Build actual datetime range from AS_ON / AS_OFF + date
-        if date_str:
-            try:
-                date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                AS_ON = parse_time(values[1])
-                AS_OFF = parse_time(values[3])
-                if AS_ON and AS_OFF:
-                    start_dt = datetime.combine(date, AS_ON)
-                    end_dt = datetime.combine(date, AS_OFF)
-                    if AS_OFF < AS_ON:
-                        # crosses midnight → add 1 day
-                        end_dt += timedelta(days=1)
-            except Exception:
-                start_dt = end_dt = None
+        AS_ON = parse_time(values[1])
+        AS_OFF = parse_time(values[3])
+
+        # Build actual datetime range from date_obj + AS_ON/AS_OFF
+        if AS_ON and AS_OFF and date_obj:
+            start_dt = datetime.combine(date_obj, AS_ON)
+            end_dt = datetime.combine(date_obj, AS_OFF)
+            if AS_OFF < AS_ON:
+                # crosses midnight → add 1 day
+                end_dt += timedelta(days=1)
 
         if start_dt and end_dt:
             # Split at midnight, apply correct day-based OT% to each segment
