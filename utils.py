@@ -80,7 +80,7 @@ def parse_duration(text: str) -> float:
         return 0
     return 0
 
-# -------------------- internal helpers for OT split -------------------- #
+# -------------------- internal helpers for OT / loading split -------------------- #
 def _hours_between(a: datetime, b: datetime) -> float:
     return (b - a).total_seconds() / 3600.0
 
@@ -127,7 +127,7 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
 
     WOBOD = extra 50% ordinary * worked_hours when OT shift + WOBOD checkbox.
 
-    Afternoon/Night/Morning penalties, Special, Sick, Weekend loading preserved.
+    Weekend loading (Sat 50%, Sun 100%) is also split by midnight for non-OT shifts.
     Daily Rate uses actual worked hours, not fixed 8h.
     """
     R = rates or rate_constants
@@ -142,6 +142,10 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
     # Worked hours = actual hours (or 8 if blank)
     worked_hours = parse_duration(values[4]) or 8
     ordinary = R["Ordinary Hours"]
+
+    # Pre-parse actual shift times once (used for weekend loading & OT split)
+    AS_ON  = parse_time(values[1])
+    AS_OFF = parse_time(values[3])
 
     # ---------- PENALTY (Afternoon / Night / Morning) ----------
     penalty_hours = math.floor(worked_hours)
@@ -170,13 +174,36 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
     if any((v or "").upper() == "ADO" for v in values):
         daily_rate += round(4 * ordinary, 2)
 
-    # ---------- WEEKEND LOADING (on top of ordinary for Sat/Sun) ----------
+    # ---------- WEEKEND LOADING (Sat 50% / Sun 100%), split over midnight if needed ----------
     loading = 0.0
-    if rs_on not in ["OFF", "ADO"]:
-        if day == "Saturday":
-            loading = round(worked_hours * R["Sat Loading 50%"], 2)
-        elif day == "Sunday":
-            loading = round(worked_hours * R["Sun Loading 100%"], 2)
+    if rs_on not in ["OFF", "ADO"] and not ot_shift_flag:
+        if AS_ON and AS_OFF and date_obj:
+            start_dt = datetime.combine(date_obj, AS_ON)
+            end_dt   = datetime.combine(date_obj, AS_OFF)
+            if AS_OFF < AS_ON:
+                end_dt += timedelta(days=1)
+
+            segments = _split_shift_by_midnight(start_dt, end_dt)
+            total_load = 0.0
+            for s, e in segments:
+                h = _hours_between(s, e)
+                # Match your behaviour: round segment hours to 2 decimals
+                h = round(h, 2)
+                dow = s.weekday()  # 0=Mon ... 5=Sat, 6=Sun
+                if dow == 5:      # Saturday
+                    rate = R["Sat Loading 50%"]
+                elif dow == 6:    # Sunday
+                    rate = R["Sun Loading 100%"]
+                else:
+                    rate = 0.0
+                total_load += h * rate
+            loading = round(total_load, 2)
+        else:
+            # Fallback if we can't parse times/date: old behaviour
+            if day == "Saturday":
+                loading = round(worked_hours * R["Sat Loading 50%"], 2)
+            elif day == "Sunday":
+                loading = round(worked_hours * R["Sun Loading 100%"], 2)
 
     # ============================================================
     # 1) DAILY OT (original unit-based logic) — only if NOT OT-shift
@@ -216,13 +243,9 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
     if ot_shift_flag and rs_on not in ["OFF", "ADO"]:
         start_dt = end_dt = None
 
-        AS_ON = parse_time(values[1])
-        AS_OFF = parse_time(values[3])
-
-        # Build actual datetime range from date_obj + AS_ON/AS_OFF
         if AS_ON and AS_OFF and date_obj:
             start_dt = datetime.combine(date_obj, AS_ON)
-            end_dt = datetime.combine(date_obj, AS_OFF)
+            end_dt   = datetime.combine(date_obj, AS_OFF)
             if AS_OFF < AS_ON:
                 # crosses midnight → add 1 day
                 end_dt += timedelta(days=1)
@@ -248,7 +271,7 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
 
         # In OT-shift mode we suppress normal ordinary+weekend loading for these hours
         daily_rate = 0.0
-        loading = 0.0
+        loading    = 0.0
 
     # ============================================================
     # 3) WOBOD — extra 50% ordinary * worked_hours on OT shift
