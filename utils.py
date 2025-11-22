@@ -122,6 +122,8 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
     OT logic has TWO layers:
 
     1) Daily OT (unit-based, original behaviour) – runs when OT checkbox is NOT ticked.
+       - NEW: if unit_val <= 0 → OT daily pay = 0 (deduction is implicit via daily_rate only).
+
     2) OT shift (OT checkbox ticked) – whole worked hours that day at OT%,
        split by actual day (Fri/Sat/Sun…) if the shift crosses midnight.
 
@@ -187,7 +189,6 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
             total_load = 0.0
             for s, e in segments:
                 h = _hours_between(s, e)
-                # Match your behaviour: round segment hours to 2 decimals
                 h = round(h, 2)
                 dow = s.weekday()  # 0=Mon ... 5=Sat, 6=Sun
                 if dow == 5:      # Saturday
@@ -206,15 +207,21 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
                 loading = round(worked_hours * R["Sun Loading 100%"], 2)
 
     # ============================================================
-    # 1) DAILY OT (original unit-based logic) — only if NOT OT-shift
+    # 1) DAILY OT (original unit-based logic, now ignoring negative unit)
     # ============================================================
     ot_daily_pay = 0.0
 
     if not ot_shift_flag:
-        if rs_on == "ADO" and unit_val >= 0:
+        if unit_val <= 0:
+            # Shortfall or exactly 0: no OT entry at all.
+            # Deduction is already reflected via daily_rate (worked_hours < 8).
+            ot_daily_pay = 0.0
+
+        elif rs_on == "ADO":
+            # ADO day with positive unit (if that ever occurs)
             ot_daily_pay = round(unit_val * R["ADO Adjustment"], 2)
 
-        elif rs_on not in ["OFF", "ADO"] and unit_val >= 0:
+        elif rs_on not in ["OFF", "ADO"]:
             # Regular daily OT: weekday 150%, Sat/Sun 200%
             if day in ["Saturday", "Sunday"]:
                 ot_daily_pay = round(unit_val * R["OT 200%"], 2)
@@ -222,7 +229,7 @@ def calculate_row(day, date_obj, values, sick, penalty_value, special_value, uni
                 ot_daily_pay = round(unit_val * R["OT 150%"], 2)
 
         else:
-            # negative or OFF/ADO -> ordinary + applicable loading (your original fallbacks)
+            # OFF/ADO with positive unit: fallback to ordinary + applicable loading
             if day == "Saturday":
                 ot_daily_pay = round(unit_val * (R["Sat Loading 50%"] + ordinary), 2)
             elif day == "Sunday":
