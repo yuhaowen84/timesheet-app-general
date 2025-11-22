@@ -20,10 +20,18 @@ def ensure_entries(start_date):
             entries.append({
                 "weekday": d.strftime("%A"),
                 "date_str": d.strftime("%Y-%m-%d"),
-                "rs_on": "", "as_on": "", "rs_off": "", "as_off": "",
+            
+                "rs_on": "", "as_on": "",
+                "rs_off": "", "as_off": "",
                 "worked": "", "extra": "",
-                "sick": False, "off": False, "ado": False,
+            
+                "sick": False,
+                "off": False,
+                "ado": False,
+                "ot": False,
+                "wobod": False,
             })
+
         st.session_state["entries"] = entries
         st.session_state["entries_start"] = start_str
         st.session_state["day_index"] = 0
@@ -100,13 +108,16 @@ with st.form("day_form", clear_on_submit=False):
     extra  = c6.text_input("Extra",  value=row["extra"],  key=f'extra_{day_index}',
                            help="HH:MM or HHMM")
 
-    t1, t2, t3 = st.columns(3)
-    sick_chk = t1.checkbox("Sick", value=row["sick"], key=f'sick_{day_index}',
-                           help="Behaves like OFF for unit; also adds Sick rate")
-    off_chk  = t2.checkbox("Off",  value=row["off"],  key=f'off_{day_index}',
-                           help='Acts like entering "OFF"')
-    ado_chk  = t3.checkbox("ADO",  value=row["ado"],  key=f'ado_{day_index}',
-                           help='Acts like entering "ADO"')
+    t1, t2, t3, t4, t5 = st.columns(5)
+    sick_chk  = t1.checkbox("Sick",  value=row.get("sick", False),  key=f'sick_{day_index}')
+    off_chk   = t2.checkbox("Off",   value=row.get("off", False),   key=f'off_{day_index}')
+    ado_chk   = t3.checkbox("ADO",   value=row.get("ado", False),   key=f'ado_{day_index}')
+    
+    ot_chk    = t4.checkbox("OT",    value=row.get("ot", False),    key=f'ot_{day_index}',
+                            help="Tick if this shift is paid in overtime rates.")
+    wobod_chk = t5.checkbox("WOBOD", value=row.get("wobod", False), key=f'wobod_{day_index}',
+                            help="Adds an extra 50% ordinary rate to OT hours.")
+
 
     # convenience: copy previous day's inputs
     copy_col, _, _ = st.columns([1,2,1])
@@ -133,12 +144,24 @@ elif not copy_prev and st.session_state["copy_prev_state"][day_index]:
 
 # Persist this day's values
 row_update = {
-    "weekday": row["weekday"], "date_str": row["date_str"],
-    "rs_on": rs_on.strip(), "as_on": as_on.strip(),
-    "rs_off": rs_off.strip(), "as_off": as_off.strip(),
-    "worked": worked.strip(), "extra": extra.strip(),
-    "sick": bool(sick_chk), "off": bool(off_chk), "ado": bool(ado_chk),
+    "weekday": row["weekday"],
+    "date_str": row["date_str"],
+
+    "rs_on": rs_on.strip(),
+    "as_on": as_on.strip(),
+    "rs_off": rs_off.strip(),
+    "as_off": as_off.strip(),
+
+    "worked": worked.strip(),
+    "extra": extra.strip(),
+
+    "sick":  bool(sick_chk),
+    "off":   bool(off_chk),
+    "ado":   bool(ado_chk),
+    "ot":    bool(ot_chk),
+    "wobod": bool(wobod_chk),
 }
+
 set_day(day_index, row_update)
 
 if save or save_next:
@@ -162,3 +185,4 @@ st.markdown("---")
 st.info("When you finish all days, open **Review Calculations** to see totals and breakdown.\n\n"
         "⚙️ Reminder: Your **Ordinary, Afternoon, and Night base rates** can be set from the **Home page**. "
         "They’ll flow into the calculations here.")
+
