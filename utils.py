@@ -80,32 +80,59 @@ def parse_duration(text: str) -> float:
         return 0
     return 0
 
+# -------------------- internal helpers for OT split -------------------- #
+def _hours_between(a: datetime, b: datetime) -> float:
+    return (b - a).total_seconds() / 3600.0
+
+def _split_shift_by_midnight(start_dt: datetime, end_dt: datetime):
+    """
+    Split a shift into segments that don't cross midnight.
+    Example: 2025-11-15 19:00 -> 2025-11-16 02:33
+    becomes: [ (15th 19:00, 16th 00:00), (16th 00:00, 16th 02:33) ]
+    """
+    segments = []
+    cur = start_dt
+    while cur.date() < end_dt.date():
+        midnight = datetime.combine(cur.date() + timedelta(days=1), time(0, 0))
+        segments.append((cur, midnight))
+        cur = midnight
+    segments.append((cur, end_dt))
+    return segments
+
+def _ot_multiplier_for_day(day_index: int) -> float:
+    """
+    Monday=0 ... Sunday=6
+    Weekday OT = 150%, Saturday = 200%, Sunday = 250%.
+    """
+    if day_index == 5:   # Saturday
+        return 2.0
+    if day_index == 6:   # Sunday
+        return 2.5
+    return 1.5           # Weekdays
+
 # -------------------- main row calculation -------------------- #
 def calculate_row(day, values, sick, penalty_value, special_value, unit_val, rates=None):
     """
-    values: [rs_on, as_on, rs_off, as_off, worked, extra, (date_str optional as values[6])]
+    values: [rs_on, as_on, rs_off, as_off, worked, extra, (date_str as values[6])]
     unit_val: your existing 'Unit' value (already computed in Review_Calculations)
     rates: dict of rate constants; if None, use module default
 
     OT logic has TWO layers:
 
-    1) "Daily OT"  = original behaviour using unit_val (extra over 8h etc.).
-       - This runs when OT checkbox is NOT ticked.
+    1) Daily OT (unit-based, original behaviour) – runs when OT checkbox is NOT ticked.
+    2) OT shift (OT checkbox ticked) – whole worked hours that day at OT%,
+       split by actual day (Sat/Sun) if the shift crosses midnight.
 
-    2) "OT shift"  = when OT checkbox is ticked, the whole worked day is
-       treated as overtime at 150% / 200% / 250% (weekday / Saturday / Sunday).
+    WOBOD = extra 50% ordinary * worked_hours when OT shift + WOBOD checkbox.
 
-    WOBOD (when WOBOD box ticked) = extra 50% ordinary * worked_hours
-    on top of any OT shift pay.
-
-    Afternoon/Night/Morning penalties, Special, Sick, Weekend loading are preserved.
-    Daily Rate uses actual worked hours instead of a fixed 8 hours.
+    Afternoon/Night/Morning penalties, Special, Sick, Weekend loading preserved.
+    Daily Rate uses actual worked hours, not fixed 8h.
     """
     R = rates or rate_constants
 
     # Flags injected from Review_Calculations via:
     # rates={**rates, "OT": ot_enabled, "WOBOD": wobod_enabled}
-    ot_shift_flag = R.get("OT", False)        # OT tickbox: treat whole shift as OT
+    ot_shift_flag = R.get("OT", False)        # OT tickbox → whole-day OT shift
     wobod_flag    = R.get("WOBOD", False)     # WOBOD tickbox
 
     rs_on = (values[0] or "").upper()
@@ -150,7 +177,7 @@ def calculate_row(day, values, sick, penalty_value, special_value, unit_val, rat
             loading = round(worked_hours * R["Sun Loading 100%"], 2)
 
     # ============================================================
-    # 1) DAILY OT (original unit-based logic)  — only if NOT OT-shift
+    # 1) DAILY OT (original unit-based logic) — only if NOT OT-shift
     # ============================================================
     ot_daily_pay = 0.0
 
@@ -180,26 +207,51 @@ def calculate_row(day, values, sick, penalty_value, special_value, unit_val, rat
                     ot_daily_pay = round(unit_val * ordinary, 2)
 
     # ============================================================
-    # 2) OT SHIFT PAY (tickbox: whole day at OT rate)
+    # 2) OT SHIFT PAY (tickbox: whole day at OT rate, split by date)
     # ============================================================
     ot_shift_pay = 0.0
 
     if ot_shift_flag and rs_on not in ["OFF", "ADO"]:
-        # Multiplier based on day
-        if day == "Sunday":
-            mult = 2.5  # 250%
-        elif day == "Saturday":
-            mult = 2.0  # 200%
+        date_str = values[6] if len(values) > 6 else None
+        start_dt = end_dt = None
+
+        # Build actual datetime range from AS_ON / AS_OFF + date
+        if date_str:
+            try:
+                date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                AS_ON = parse_time(values[1])
+                AS_OFF = parse_time(values[3])
+                if AS_ON and AS_OFF:
+                    start_dt = datetime.combine(date, AS_ON)
+                    end_dt = datetime.combine(date, AS_OFF)
+                    if AS_OFF < AS_ON:
+                        # crosses midnight → add 1 day
+                        end_dt += timedelta(days=1)
+            except Exception:
+                start_dt = end_dt = None
+
+        if start_dt and end_dt:
+            # Split at midnight, apply correct day-based OT% to each segment
+            segments = _split_shift_by_midnight(start_dt, end_dt)
+            total_ot = 0.0
+            for s, e in segments:
+                h = _hours_between(s, e)
+                mult = _ot_multiplier_for_day(s.weekday())
+                total_ot += h * ordinary * mult
+            ot_shift_pay = round(total_ot, 2)
         else:
-            mult = 1.5  # 150%
+            # Fallback: treat entire worked_hours as being on 'day'
+            if day == "Sunday":
+                mult = 2.5
+            elif day == "Saturday":
+                mult = 2.0
+            else:
+                mult = 1.5
+            ot_shift_pay = round(worked_hours * ordinary * mult, 2)
 
-        # Whole worked day paid at OT rate:
-        ot_shift_pay = round(worked_hours * ordinary * mult, 2)
-
-        # In this OT-shift mode, we do NOT also pay ordinary/day loading for the same hours,
-        # otherwise we double count. So suppress them:
+        # In OT-shift mode we suppress normal ordinary+weekend loading for these hours
         daily_rate = 0.0
-        loading    = 0.0
+        loading = 0.0
 
     # ============================================================
     # 3) WOBOD — extra 50% ordinary * worked_hours on OT shift
