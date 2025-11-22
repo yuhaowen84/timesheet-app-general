@@ -1,69 +1,65 @@
-# utils.py
+# utils.py (complete rewritten version)
 import math
 from datetime import datetime, timedelta, time
 
-# -------- Defaults (you can keep your existing numbers here) --------
+# ---------------------------------------------------------------
+# BASE RATES (you can edit these from Home page)
+# ---------------------------------------------------------------
 DEFAULT_BASE_RATES = {
     "ordinary": 49.81842,
     "afternoon_penalty": 4.84,
     "night_penalty": 5.69,
 }
 
-def build_rate_constants(base: dict):
-    """
-    Build the full rate table from three base inputs.
-    Multipliers match your existing constants.
-    """
+def build_rate_constants(base):
+    """Builds rate dict from user-provided base numbers."""
     ordinary = base["ordinary"]
     aft = base["afternoon_penalty"]
     night = base["night_penalty"]
 
-    rates = {
-        # penalties (per-hour adders)
-        "Afternoon Shift": aft,
-        "Early Morning": aft,          # same as Afternoon in your app
-        "Night Shift": night,
-        "Special Loading": night,      # same as Night in your app
-
-        # OT / loadings (multiples of ordinary)
-        "OT 150%": ordinary * 1.5,
-        "OT 200%": ordinary * 2.0,
-        "ADO Adjustment": ordinary,
-        "Sat Loading 50%": ordinary * 0.5,
-        "Sun Loading 100%": ordinary * 1.0,
-        "Public Holiday": ordinary,
-        "PH Loading 50%": ordinary * 0.5,
-        "PH Loading 100%": ordinary * 1.0,
-
-        # other ordinary-based
-        "Sick With MC": ordinary,
+    return {
         "Ordinary Hours": ordinary,
-    }
-    # round to 5 decimals for parity with your previous constants
-    return {k: round(v, 5) for k, v in rates.items()}
 
-# Keep a default set available (used if user doesn't customize)
+        # loading percentages (multipliers)
+        "Night Loading %": night / ordinary,
+        "Saturday Loading %": 0.5,
+        "Sunday Loading %": 1.0,
+
+        # OT multipliers
+        "OT weekday %": 1.5,
+        "OT sat %": 2.0,
+        "OT sun %": 2.5,
+
+        # WOBOD (50% extra)
+        "WOBOD %": 0.5,
+    }
+
 rate_constants = build_rate_constants(DEFAULT_BASE_RATES)
 
 NSW_PUBLIC_HOLIDAYS = {
-    "2025-01-01", "2025-01-27", "2025-04-18", "2025-04-19", "2025-04-20", "2025-04-21",
-    "2025-04-25", "2025-06-09", "2025-10-06", "2025-12-25", "2025-12-26"
+    "2025-01-01", "2025-01-27", "2025-04-18",
+    "2025-04-19", "2025-04-20", "2025-04-21",
+    "2025-04-25", "2025-06-09", "2025-10-06",
+    "2025-12-25", "2025-12-26"
 }
 
-def parse_time(text: str):
+# ---------------------------------------------------------------
+# PARSING
+# ---------------------------------------------------------------
+def parse_time(text):
     text = (text or "").strip()
     if not text: return None
     try:
         if ":" in text:
             return datetime.strptime(text, "%H:%M").time()
-        if text.isdigit() and len(text) in [3,4]:
+        if text.isdigit() and len(text) in [3, 4]:
             h, m = int(text[:-2]), int(text[-2:])
             return time(h, m)
     except:
         return None
     return None
 
-def parse_duration(text: str) -> float:
+def parse_duration(text):
     text = (text or "").strip()
     if not text: return 0
     try:
@@ -77,60 +73,145 @@ def parse_duration(text: str) -> float:
         return 0
     return 0
 
-def calculate_row(day, values, sick, penalty_value, special_value, unit_val, rates=None):
-    """
-    values: [rs_on, as_on, rs_off, as_off, worked, extra]
-    rates: dict of rate constants; if None, use module default
-    """
-    R = rates or rate_constants
+# ---------------------------------------------------------------
+# SHIFT SPLITTING / CLASSIFICATION
+# ---------------------------------------------------------------
+def split_shift_by_midnight(start_dt, end_dt):
+    """Split into segments that do not cross midnight."""
+    segs = []
+    cur = start_dt
 
-    ot_rate = 0
-    if values[0].upper() == "ADO" and unit_val >= 0:
-        ot_rate = round(unit_val * R["ADO Adjustment"], 2)
-    elif values[0].upper() not in ["OFF", "ADO"] and unit_val >= 0:
-        if day in ["Saturday", "Sunday"]:
-            ot_rate = round(unit_val * R["OT 200%"], 2)
-        else:
-            ot_rate = round(unit_val * R["OT 150%"], 2)
-    else:
-        # negative or OFF/ADO -> ordinary + applicable loading
-        if day == "Saturday":
-            ot_rate = round(unit_val * (R["Sat Loading 50%"] + R["Ordinary Hours"]), 2)
-        elif day == "Sunday":
-            ot_rate = round(unit_val * (R["Sun Loading 100%"] + R["Ordinary Hours"]), 2)
-        else:
-            if penalty_value in ["Afternoon", "Morning"]:
-                ot_rate = round(unit_val * (R["Afternoon Shift"] + R["Ordinary Hours"]), 2)
-            elif penalty_value == "Night":
-                ot_rate = round(unit_val * (R["Night Shift"] + R["Ordinary Hours"]), 2)
-            else:
-                ot_rate = round(unit_val * R["Ordinary Hours"], 2)
+    while cur.date() < end_dt.date():
+        nxt = datetime.combine(cur.date() + timedelta(days=1), time(0,0))
+        segs.append((cur, nxt))
+        cur = nxt
 
-    # Penalty hours: floor(worked), default 8 if blank/invalid
-    worked_hours = parse_duration(values[4]) or 8
-    penalty_hours = math.floor(worked_hours)
+    segs.append((cur, end_dt))
+    return segs
 
-    penalty_rate = 0
-    if penalty_value == "Afternoon":
-        penalty_rate = round(penalty_hours * R["Afternoon Shift"], 2)
-    elif penalty_value == "Night":
-        penalty_rate = round(penalty_hours * R["Night Shift"], 2)
-    elif penalty_value == "Morning":
-        penalty_rate = round(penalty_hours * R["Early Morning"], 2)
+def hours(a, b):
+    return (b - a).total_seconds() / 3600
 
-    special_loading = round(R["Special Loading"], 2) if special_value == "Yes" else 0
-    sick_rate = round(8 * R["Sick With MC"], 2) if sick else 0
-    daily_rate = 0 if values[0].upper() in ["OFF", "ADO"] else round(8 * R["Ordinary Hours"], 2)
+def classify_day(d):
+    wd = d.weekday()  # Monday=0
+    if wd == 5:  return "sat"
+    if wd == 6:  return "sun"
+    return "weekday"
 
-    if any(v.upper() == "ADO" for v in values):
-        daily_rate += round(4 * R["Ordinary Hours"], 2)
+def overlap(start_dt, end_dt, w_start, w_end):
+    day = start_dt.date()
+    ws = datetime.combine(day, w_start)
+    we = datetime.combine(day, w_end)
+    st = max(start_dt, ws)
+    en = min(end_dt, we)
+    if en <= st: return 0
+    return hours(st, en)
 
-    loading = 0
-    if values[0].upper() not in ["OFF", "ADO"]:
-        if day == "Saturday":
-            loading = round(8 * R["Sat Loading 50%"], 2)
-        elif day == "Sunday":
-            loading = round(8 * R["Sun Loading 100%"], 2)
+NIGHT_START = time(18,0)
+NIGHT_END   = time(23,59,59)
 
-    daily_count = ot_rate + penalty_rate + special_loading + sick_rate + daily_rate + loading
-    return ot_rate, penalty_rate, special_loading, sick_rate, daily_rate, loading, daily_count
+def calculate_shift_components(start_dt, end_dt):
+    segs = split_shift_by_midnight(start_dt, end_dt)
+
+    result = {
+        "weekday": 0.0,
+        "sat": 0.0,
+        "sun": 0.0,
+        "night": 0.0,
+    }
+
+    for s, e in segs:
+        d = classify_day(s.date())
+        h = hours(s, e)
+
+        result[d] += h
+
+        # night only on weekdays
+        if d == "weekday":
+            result["night"] += overlap(s, e, NIGHT_START, NIGHT_END)
+
+    return result
+
+# ---------------------------------------------------------------
+# OVERTIME + WOBOD
+# ---------------------------------------------------------------
+def calculate_ot(start_dt, end_dt, rates, ot_enabled, wobod_enabled):
+    if not ot_enabled:
+        return {"ot_hours": 0, "ot_pay": 0, "wobod": 0}
+
+    segs = split_shift_by_midnight(start_dt, end_dt)
+    ord_rate = rates["Ordinary Hours"]
+
+    ot_hours = 0
+    ot_pay   = 0
+    wobod    = 0
+
+    for s, e in segs:
+        h = hours(s, e)
+        ot_hours += h
+        d = classify_day(s.date())
+
+        mult = rates[f"OT {d} %"]   # 1.5 / 2.0 / 2.5
+        ot_pay += h * ord_rate * (mult - 1)
+
+        if wobod_enabled:
+            wobod += h * ord_rate * rates["WOBOD %"]
+
+    return {"ot_hours": ot_hours, "ot_pay": ot_pay, "wobod": wobod}
+
+# ---------------------------------------------------------------
+# DAILY PAY ENGINE
+# ---------------------------------------------------------------
+def calculate_daily_pay(comp, rates, ot):
+    ord_rate = rates["Ordinary Hours"]
+
+    base = (
+        comp["weekday"] * ord_rate +
+        comp["sat"]     * ord_rate +
+        comp["sun"]     * ord_rate
+    )
+
+    night = comp["night"] * ord_rate * rates["Night Loading %"]
+    sat_ldg = comp["sat"] * ord_rate * rates["Saturday Loading %"]
+    sun_ldg = comp["sun"] * ord_rate * rates["Sunday Loading %"]
+
+    total = base + night + sat_ldg + sun_ldg + ot["ot_pay"] + ot["wobod"]
+    return round(total, 2)
+
+# ---------------------------------------------------------------
+# WRAPPER FOR REVIEW PAGE
+# ---------------------------------------------------------------
+def calculate_row(day, values, sick, penalty, special, unit, rates):
+    """Keeps your Review page working with new engine."""
+    if values[0].upper() in ["OFF", "ADO"] or sick:
+        return 0, 0, 0, 0, 0, 0, 0
+
+    date_str = values[6]
+    date = datetime.strptime(date_str, "%Y-%m-%d").date()
+
+    AS_ON  = parse_time(values[1])
+    AS_OFF = parse_time(values[3])
+
+    a_start = datetime.combine(date, AS_ON)
+    a_end = datetime.combine(date, AS_OFF)
+    if AS_OFF < AS_ON:
+        a_end += timedelta(days=1)
+
+    comp = calculate_shift_components(a_start, a_end)
+
+    ot = calculate_ot(
+        a_start, a_end,
+        rates,
+        ot_enabled=True,
+        wobod_enabled=True
+    )
+
+    daily = calculate_daily_pay(comp, rates, ot)
+
+    return (
+        ot["ot_hours"],
+        0, 0, 0,      # penalty / special placeholder
+        daily,
+        daily,
+        daily
+    )
