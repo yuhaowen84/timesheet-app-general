@@ -126,15 +126,16 @@ for r in entries:
     rows.append([
         weekday, date_str, display_rs_on, values[1], values[2], values[3], values[4], values[5],
         "Yes" if sick else "No", f"{unit:.2f}", penalty, special, is_holiday,
-        f"{ot:.2f}", f"{prate:.2f}", f"{sload:.2f}", f"{srate:.2f}",
+        f"{ot:.2f}", f"{sload:.2f}", f"{prate:.2f}", f"{srate:.2f}",
         f"{lrate:.2f}", f"{drate:.2f}", f"{dcount:.2f}"
     ])
+
 
 # Build table
 cols = [
     "Weekday","Date","R Sign-on","A Sign-on","R Sign-off","A Sign-off","Worked","Extra","Sick",
     "Unit","Penalty","Special","Holiday",
-    "OT Rate","Penalty Rate","Special Ldg","Sick Rate","Loading","Daily Rate","Daily Count"
+    "OT Rate","Special Ldg","Penalty Rate","Sick Rate","Loading","Daily Rate","Daily Count"
 ]
 df = pd.DataFrame(rows, columns=cols)
 
@@ -169,6 +170,7 @@ def highlight_total(row):
     return ['background-color: #d0ffd0' if row.name == len(df)-1 else '' for _ in row]
 
 st.dataframe(df.style.apply(highlight_total, axis=1), use_container_width=True)
+
 
 
 
