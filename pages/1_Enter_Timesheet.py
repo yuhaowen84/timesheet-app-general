@@ -166,7 +166,7 @@ set_day(day_index, row_update)
 
 if save or save_next:
     st.success(f"Saved {row['weekday']} ({row['date_str']}).")
-    if save_next and day_index < total_days - 1:
+    if save_next and day_index <= total_days - 1:
         st.session_state["day_index"] = day_index + 1
         st.rerun()
 
@@ -185,6 +185,7 @@ st.markdown("---")
 st.info("When you finish all days, open **Review Calculations** to see totals and breakdown.\n\n"
         "⚙️ Reminder: Your **Ordinary, Afternoon, and Night base rates** can be set from the **Home page**. "
         "They’ll flow into the calculations here.")
+
 
 
 
