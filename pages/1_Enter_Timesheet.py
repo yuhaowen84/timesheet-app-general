@@ -170,7 +170,7 @@ if save or save_next:
         st.session_state["day_index"] = day_index + 1
         st.rerun()
     else
-        st.session_state["day_index"] = day_index + 1
+        st.rerun()
 
 # footer nav
 nav_left, _, nav_right = st.columns([1,2,1])
@@ -187,6 +187,7 @@ st.markdown("---")
 st.info("When you finish all days, open **Review Calculations** to see totals and breakdown.\n\n"
         "⚙️ Reminder: Your **Ordinary, Afternoon, and Night base rates** can be set from the **Home page**. "
         "They’ll flow into the calculations here.")
+
 
 
 
